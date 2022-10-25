@@ -30,7 +30,9 @@ func (fw *InotifyFileWatcher) BlockUntilExists(t *tomb.Tomb) error {
 	if err != nil {
 		return err
 	}
-	defer RemoveWatchCreate(fw.Filename)
+	defer func(fname string) {
+		_ = RemoveWatchCreate(fname)
+	}(fw.Filename)
 
 	// Do a real check now as the file might have been created before
 	// calling `WatchFlags` above.
@@ -62,7 +64,6 @@ func (fw *InotifyFileWatcher) BlockUntilExists(t *tomb.Tomb) error {
 			return tomb.ErrDying
 		}
 	}
-	panic("unreachable")
 }
 
 func (fw *InotifyFileWatcher) ChangeEvents(t *tomb.Tomb, pos int64) (*FileChanges, error) {
@@ -87,11 +88,11 @@ func (fw *InotifyFileWatcher) ChangeEvents(t *tomb.Tomb, pos int64) (*FileChange
 			select {
 			case evt, ok = <-events:
 				if !ok {
-					RemoveWatch(fw.Filename)
+					_ = RemoveWatch(fw.Filename)
 					return
 				}
 			case <-t.Dying():
-				RemoveWatch(fw.Filename)
+				_ = RemoveWatch(fw.Filename)
 				return
 			}
 
@@ -100,7 +101,7 @@ func (fw *InotifyFileWatcher) ChangeEvents(t *tomb.Tomb, pos int64) (*FileChange
 				fallthrough
 
 			case evt.Op&fsnotify.Rename == fsnotify.Rename:
-				RemoveWatch(fw.Filename)
+				_ = RemoveWatch(fw.Filename)
 				changes.NotifyDeleted()
 				return
 
@@ -112,7 +113,7 @@ func (fw *InotifyFileWatcher) ChangeEvents(t *tomb.Tomb, pos int64) (*FileChange
 				fi, err := os.Stat(fw.Filename)
 				if err != nil {
 					if os.IsNotExist(err) {
-						RemoveWatch(fw.Filename)
+						_ = RemoveWatch(fw.Filename)
 						changes.NotifyDeleted()
 						return
 					}

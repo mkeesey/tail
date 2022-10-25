@@ -6,6 +6,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/tenebris-tech/tail"
@@ -36,7 +37,7 @@ func main() {
 	}
 
 	if n != 0 {
-		config.Location = &tail.SeekInfo{-n, os.SEEK_END}
+		config.Location = &tail.SeekInfo{Offset: -n, Whence: io.SeekEnd}
 	}
 
 	done := make(chan bool)

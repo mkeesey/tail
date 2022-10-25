@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"strings"
@@ -94,7 +93,7 @@ var (
 	// DefaultLogger is used when Config.Logger == nil
 	DefaultLogger = log.New(os.Stderr, "", log.LstdFlags)
 	// DiscardingLogger can be used to disable logging output
-	DiscardingLogger = log.New(ioutil.Discard, "", 0)
+	DiscardingLogger = log.New(io.Discard, "", 0)
 )
 
 // TailFile begins tailing the file. Output stream is made available
@@ -144,7 +143,7 @@ func (tail *Tail) Tell() (offset int64, err error) {
 	if tail.file == nil {
 		return
 	}
-	offset, err = tail.file.Seek(0, os.SEEK_CUR)
+	offset, err = tail.file.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return
 	}
@@ -180,7 +179,7 @@ func (tail *Tail) close() {
 
 func (tail *Tail) closeFile() {
 	if tail.file != nil {
-		tail.file.Close()
+		_ = tail.file.Close()
 		tail.file = nil
 	}
 }
@@ -244,7 +243,7 @@ func (tail *Tail) tailFileSync() {
 		_, err := tail.file.Seek(tail.Location.Offset, tail.Location.Whence)
 		tail.Logger.Printf("Seeked %s - %+v\n", tail.Filename, tail.Location)
 		if err != nil {
-			tail.Killf("Seek error on %s: %s", tail.Filename, err)
+			_ = tail.Killf("Seek error on %s: %s", tail.Filename, err)
 			return
 		}
 	}
@@ -274,8 +273,8 @@ func (tail *Tail) tailFileSync() {
 			if cooloff {
 				// Wait a second before seeking till the end of
 				// file when rate limit is reached.
-				msg := ("Too much log activity; waiting a second " +
-					"before resuming tailing")
+				msg := "Too much log activity; waiting a second " +
+					"before resuming tailing"
 				tail.Lines <- &Line{msg, time.Now(), errors.New(msg)}
 				select {
 				case <-time.After(time.Second):
@@ -317,7 +316,7 @@ func (tail *Tail) tailFileSync() {
 			}
 		} else {
 			// non-EOF error
-			tail.Killf("Error reading %s: %s", tail.Filename, err)
+			_ = tail.Killf("Error reading %s: %s", tail.Filename, err)
 			return
 		}
 
@@ -337,7 +336,7 @@ func (tail *Tail) tailFileSync() {
 // reopened if ReOpen is true. Truncated files are always reopened.
 func (tail *Tail) waitForChanges() error {
 	if tail.changes == nil {
-		pos, err := tail.file.Seek(0, os.SEEK_CUR)
+		pos, err := tail.file.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
 		}
@@ -377,7 +376,6 @@ func (tail *Tail) waitForChanges() error {
 	case <-tail.Dying():
 		return ErrStop
 	}
-	panic("unreachable")
 }
 
 func (tail *Tail) openReader() {
@@ -390,7 +388,7 @@ func (tail *Tail) openReader() {
 }
 
 func (tail *Tail) seekEnd() error {
-	return tail.seekTo(SeekInfo{Offset: 0, Whence: os.SEEK_END})
+	return tail.seekTo(SeekInfo{Offset: 0, Whence: io.SeekEnd})
 }
 
 func (tail *Tail) seekTo(pos SeekInfo) error {
@@ -434,5 +432,5 @@ func (tail *Tail) sendLine(line string) bool {
 // meant to be invoked from a process's exit handler. Linux kernel may not
 // automatically remove inotify watches after the process exits.
 func (tail *Tail) Cleanup() {
-	watch.Cleanup(tail.Filename)
+	_ = watch.Cleanup(tail.Filename)
 }
