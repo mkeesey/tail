@@ -10,9 +10,8 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/tenebris-tech/tail/util"
-
-	"gopkg.in/fsnotify/fsnotify.v1"
 )
 
 type InotifyTracker struct {
@@ -31,8 +30,8 @@ type watchInfo struct {
 	fname string
 }
 
-func (this *watchInfo) isCreate() bool {
-	return this.op == fsnotify.Create
+func (t *watchInfo) isCreate() bool {
+	return t.op == fsnotify.Create
 }
 
 var (
@@ -64,7 +63,7 @@ func Watch(fname string) error {
 	})
 }
 
-// Watch create signals the run goroutine to begin watching the input filename
+// WatchCreate signals the run goroutine to begin watching the input filename
 // if call the WatchCreate function, don't call the Cleanup, call the RemoveWatchCreate
 func WatchCreate(fname string) error {
 	return watch(&watchInfo{

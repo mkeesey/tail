@@ -196,11 +196,11 @@ func (tail *Tail) reopen() error {
 					if err == tomb.ErrDying {
 						return err
 					}
-					return fmt.Errorf("Failed to detect creation of %s: %s", tail.Filename, err)
+					return fmt.Errorf("failed to detect creation of %s: %s", tail.Filename, err)
 				}
 				continue
 			}
-			return fmt.Errorf("Unable to open file %s: %s", tail.Filename, err)
+			return fmt.Errorf("unable to open file %s: %s", tail.Filename, err)
 		}
 		break
 	}
@@ -273,7 +273,7 @@ func (tail *Tail) tailFileSync() {
 			if cooloff {
 				// Wait a second before seeking till the end of
 				// file when rate limit is reached.
-				msg := "Too much log activity; waiting a second " +
+				msg := "too much log activity; waiting a second " +
 					"before resuming tailing"
 				tail.Lines <- &Line{msg, time.Now(), errors.New(msg)}
 				select {
@@ -379,12 +379,14 @@ func (tail *Tail) waitForChanges() error {
 }
 
 func (tail *Tail) openReader() {
+	tail.lk.Lock()
 	if tail.MaxLineSize > 0 {
 		// add 2 to account for newline characters
 		tail.reader = bufio.NewReaderSize(tail.file, tail.MaxLineSize+2)
 	} else {
 		tail.reader = bufio.NewReader(tail.file)
 	}
+	tail.lk.Unlock()
 }
 
 func (tail *Tail) seekEnd() error {
@@ -394,7 +396,7 @@ func (tail *Tail) seekEnd() error {
 func (tail *Tail) seekTo(pos SeekInfo) error {
 	_, err := tail.file.Seek(pos.Offset, pos.Whence)
 	if err != nil {
-		return fmt.Errorf("Seek error on %s: %s", tail.Filename, err)
+		return fmt.Errorf("seek error on %s: %s", tail.Filename, err)
 	}
 	// Reset the read buffer whenever the file is re-seek'ed
 	tail.reader.Reset(tail.file)

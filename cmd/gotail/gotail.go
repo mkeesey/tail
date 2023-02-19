@@ -15,7 +15,7 @@ import (
 func args2config() (tail.Config, int64) {
 	config := tail.Config{Follow: true}
 	n := int64(0)
-	maxlinesize := int(0)
+	maxlinesize := 0
 	flag.Int64Var(&n, "n", 0, "tail from the last Nth location")
 	flag.IntVar(&maxlinesize, "max", 0, "max line size")
 	flag.BoolVar(&config.Follow, "f", false, "wait for additional data to be appended to the file")
@@ -45,7 +45,7 @@ func main() {
 		go tailFile(filename, config, done)
 	}
 
-	for _, _ = range flag.Args() {
+	for range flag.Args() {
 		<-done
 	}
 }
