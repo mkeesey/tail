@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -25,46 +26,75 @@ const MaxSleepNs = 500000 // 0.5 ms
 const MinSleepNS = 1000   // 0.001 ms
 
 // Disable Library e2e tests unless we're digging into things.
-const EnableLibraryTests = false
+const EnableE2ETests = false
 
 func TestTail_Offsets(t *testing.T) {
-	testDir := t.TempDir()
-	testFile := filepath.Join(testDir, "test.log")
-	f, err := os.Create(testFile)
-	noError(t, err)
-	f.WriteString("hello\n") //6
+	t.Run("Offsets without FileIdentifier", func(t *testing.T) {
+		testFile, f := testFile(t)
+		defer f.Close()
+		f.WriteString("hello\n") //6
 
-	tailer, err := TailFile(testFile, Config{Follow: true, ReOpen: true})
-	noError(t, err)
-	line := <-tailer.Lines
-	tailer.Cleanup()
-	tailer.Stop()
+		tailer, err := TailFile(testFile, Config{Follow: true, ReOpen: true})
+		noError(t, err)
+		line := <-tailer.Lines
+		cleanTailer(tailer)
 
-	if line.Text != "hello" {
-		t.Errorf(`expect "hello" got %q`, line.Text)
-	}
-	if line.Offset != 6 {
-		t.Errorf(`expected offset of 6, got %d`, line.Offset)
-	}
+		eq(t, line.Text, "hello")
+		eq(t, line.Offset, int64(6))
 
-	f.WriteString("world\n") //6 + 6 = 12
-	tailer, err = TailFile(testFile, Config{Follow: true, ReOpen: true, Location: &SeekInfo{Offset: line.Offset, Whence: 0}})
-	noError(t, err)
-	line = <-tailer.Lines
-	tailer.Cleanup()
-	tailer.Stop()
+		f.WriteString("world\n") //6 + 6 = 12
+		tailer, err = TailFile(testFile, Config{Follow: true, ReOpen: true, Location: &SeekInfo{Offset: line.Offset, Whence: 0}})
+		noError(t, err)
+		line = <-tailer.Lines
+		cleanTailer(tailer)
 
-	if line.Text != "world" {
-		t.Errorf(`expect "world" got %q`, line.Text)
-	}
-	if line.Offset != 12 {
-		t.Errorf(`expected offset of 12, got %d`, line.Offset)
-	}
+		eq(t, line.Text, "world")
+		eq(t, line.Offset, int64(12))
+	})
+
+	t.Run("Offsets with FileIdentifier", func(t *testing.T) {
+		testFile, f := testFile(t)
+		f.WriteString("hello\n") //6
+
+		tailer, err := TailFile(testFile, Config{Follow: true, ReOpen: true})
+		noError(t, err)
+		line := <-tailer.Lines
+		cleanTailer(tailer)
+
+		eq(t, line.Text, "hello")
+		eq(t, line.Offset, int64(6))
+
+		// Old file removed, new file created
+		f.Close()
+		err = os.Rename(testFile, testFile+".1")
+		noError(t, err)
+		f, err = os.Create(testFile)
+		noError(t, err)
+		f.WriteString("world\n") //6
+
+		tailer, err = TailFile(testFile, Config{Follow: true, ReOpen: true, Location: &SeekInfo{Offset: line.Offset, Whence: 0, FileIdentifier: line.FileIdentifier}})
+		noError(t, err)
+		line = <-tailer.Lines
+		cleanTailer(tailer)
+
+		// New file, so we did not seek. Offset is 6 again.
+		eq(t, line.Text, "world")
+		eq(t, line.Offset, int64(6))
+
+		f.WriteString("again\n") //6 + 6 = 12
+		tailer, err = TailFile(testFile, Config{Follow: true, ReOpen: true, Location: &SeekInfo{Offset: line.Offset, Whence: 0, FileIdentifier: line.FileIdentifier}})
+		noError(t, err)
+		line = <-tailer.Lines
+		cleanTailer(tailer)
+
+		eq(t, line.Text, "again")
+		eq(t, line.Offset, int64(12))
+	})
 }
 
 // Exercise the library against how files are rotated with kubernetes log drivers.
 func TestTail_KubernetesLogDriver(t *testing.T) {
-	if !EnableLibraryTests || testing.Short() {
+	if !EnableE2ETests || testing.Short() {
 		t.Skip("skipping test in short mode.")
 	}
 
@@ -241,9 +271,30 @@ func compressFile(t *testing.T, fileName string, lastTimestamp time.Time) {
 	}
 }
 
+func testFile(t *testing.T) (string, *os.File) {
+	t.Helper()
+	testDir := t.TempDir()
+	testFile := filepath.Join(testDir, "test.log")
+	f, err := os.Create(testFile)
+	noError(t, err)
+	return testFile, f
+}
+
+func cleanTailer(tailer *Tail) {
+	tailer.Cleanup()
+	tailer.Stop()
+}
+
 func noError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
+	}
+}
+
+func eq(t *testing.T, actual, expected any) {
+	t.Helper()
+	if !reflect.DeepEqual(expected, actual) {
+		t.Fatalf("Expected %v, got %v", expected, actual)
 	}
 }

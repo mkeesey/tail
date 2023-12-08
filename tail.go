@@ -38,6 +38,11 @@ type Line struct {
 type SeekInfo struct {
 	Offset int64
 	Whence int // os.SEEK_*
+
+	// FileIdentifier is an optional string to define the opaque identifier for the file offset.
+	// This allows only seeking if reading the same file as before.
+	// Populate using a value generated from Line.FileIdentifier.
+	FileIdentifier string
 }
 
 type logger interface {
@@ -243,13 +248,17 @@ func (tail *Tail) tailFileSync() {
 
 	// Seek to requested location on first open of the file.
 	if tail.Location != nil {
-		_, err := tail.file.Seek(tail.Location.Offset, tail.Location.Whence)
-		tail.Logger.Printf("Seeked %s - %+v\n", tail.Filename, tail.Location)
-		if err != nil {
-			_ = tail.Killf("Seek error on %s: %s", tail.Filename, err)
-			return
+		if tail.Location.FileIdentifier == "" || tail.Location.FileIdentifier == tail.fileIdentifier {
+			_, err := tail.file.Seek(tail.Location.Offset, tail.Location.Whence)
+			tail.Logger.Printf("Seeked %s - %+v\n", tail.Filename, tail.Location)
+			if err != nil {
+				_ = tail.Killf("Seek error on %s: %s", tail.Filename, err)
+				return
+			}
+			offset = tail.Location.Offset
+		} else {
+			tail.Logger.Printf("Skipping seek because fileIdentifier %q does not match requested FileIdentifier %q", tail.fileIdentifier, tail.Location.FileIdentifier)
 		}
-		offset = tail.Location.Offset
 	}
 
 	tail.openReader()
