@@ -1,5 +1,6 @@
 // Copyright (c) 2015 HPE Software Inc. All rights reserved.
 // Copyright (c) 2013 ActiveState Software Inc. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 
 package tail
 
@@ -26,14 +27,11 @@ var (
 )
 
 type Line struct {
-	Text string
-	Time time.Time
-	Err  error // Error from tail
-}
-
-// NewLine returns a Line with present time.
-func NewLine(text string) *Line {
-	return &Line{text, time.Now(), nil}
+	Text           string
+	Time           time.Time
+	Err            error  // Error from tail
+	Offset         int64  // Offset of the beginning of the line in the file
+	FileIdentifier string // unique identifier for the current file - OS specific
 }
 
 // SeekInfo represents arguments to `os.Seek`
@@ -78,8 +76,9 @@ type Tail struct {
 	Lines    chan *Line
 	Config
 
-	file   *os.File
-	reader *bufio.Reader
+	file           *os.File
+	reader         *bufio.Reader
+	fileIdentifier string // unique identifier for the current file - OS specific
 
 	watcher watch.FileWatcher
 	changes *watch.FileChanges
@@ -124,7 +123,7 @@ func TailFile(filename string, config Config) (*Tail, error) {
 
 	if t.MustExist {
 		var err error
-		t.file, err = OpenFile(t.Filename)
+		t.file, t.fileIdentifier, err = OpenFile(t.Filename)
 		if err != nil {
 			return nil, err
 		}
@@ -188,7 +187,7 @@ func (tail *Tail) reopen() error {
 	tail.closeFile()
 	for {
 		var err error
-		tail.file, err = OpenFile(tail.Filename)
+		tail.file, tail.fileIdentifier, err = OpenFile(tail.Filename)
 		if err != nil {
 			if os.IsNotExist(err) {
 				tail.Logger.Printf("Waiting for %s to appear...", tail.Filename)
@@ -207,20 +206,22 @@ func (tail *Tail) reopen() error {
 	return nil
 }
 
-func (tail *Tail) readLine() (string, error) {
+func (tail *Tail) readLine() (string, int64, error) {
 	tail.lk.Lock()
 	line, err := tail.reader.ReadString('\n')
 	tail.lk.Unlock()
+
+	read := int64(len(line))
 	if err != nil {
 		// Note ReadString "returns the data read before the error" in
 		// case of an error, including EOF, so we return it as is. The
 		// caller is expected to process it if err is EOF.
-		return line, err
+		return line, read, err
 	}
 
 	line = strings.TrimRight(line, "\n")
 
-	return line, err
+	return line, read, err
 }
 
 func (tail *Tail) tailFileSync() {
@@ -238,6 +239,8 @@ func (tail *Tail) tailFileSync() {
 		}
 	}
 
+	var offset int64 = 0
+
 	// Seek to requested location on first open of the file.
 	if tail.Location != nil {
 		_, err := tail.file.Seek(tail.Location.Offset, tail.Location.Whence)
@@ -246,36 +249,25 @@ func (tail *Tail) tailFileSync() {
 			_ = tail.Killf("Seek error on %s: %s", tail.Filename, err)
 			return
 		}
+		offset = tail.Location.Offset
 	}
 
 	tail.openReader()
 
-	var offset int64
-	var err error
-
 	// Read line by line.
 	for {
-		// do not seek in named pipes
-		if !tail.Pipe {
-			// grab the position in case we need to back up in the event of a half-line
-			offset, err = tail.Tell()
-			if err != nil {
-				tail.Kill(err)
-				return
-			}
-		}
-
-		line, err := tail.readLine()
+		line, numRead, err := tail.readLine()
 
 		// Process `line` even if err is EOF.
 		if err == nil {
-			cooloff := !tail.sendLine(line)
+			offset += numRead
+			cooloff := !tail.sendLine(line, offset)
 			if cooloff {
 				// Wait a second before seeking till the end of
 				// file when rate limit is reached.
 				msg := "too much log activity; waiting a second " +
 					"before resuming tailing"
-				tail.Lines <- &Line{msg, time.Now(), errors.New(msg)}
+				tail.Lines <- &Line{Text: msg, Time: time.Now(), Err: errors.New(msg)}
 				select {
 				case <-time.After(time.Second):
 				case <-tail.Dying():
@@ -288,13 +280,15 @@ func (tail *Tail) tailFileSync() {
 			}
 		} else if err == io.EOF {
 			if !tail.Follow {
+				offset += numRead
 				if line != "" {
-					tail.sendLine(line)
+					tail.sendLine(line, offset)
 				}
 				return
 			}
 
-			if tail.Follow && line != "" {
+			// Try to rewind back to the end of the last full line if we read a partial line
+			if tail.Follow && line != "" && !tail.Pipe {
 				// this has the potential to never return the last line if
 				// it's not followed by a newline; seems a fair trade here
 				err := tail.seekTo(SeekInfo{Offset: offset, Whence: 0})
@@ -405,7 +399,7 @@ func (tail *Tail) seekTo(pos SeekInfo) error {
 
 // sendLine sends the line(s) to Lines channel, splitting longer lines
 // if necessary. Return false if rate limit is reached.
-func (tail *Tail) sendLine(line string) bool {
+func (tail *Tail) sendLine(line string, offset int64) bool {
 	now := time.Now()
 	lines := []string{line}
 
@@ -415,7 +409,8 @@ func (tail *Tail) sendLine(line string) bool {
 	}
 
 	for _, line := range lines {
-		tail.Lines <- &Line{line, now, nil}
+		// TODO offset
+		tail.Lines <- &Line{Text: line, Time: now, Err: nil, FileIdentifier: tail.fileIdentifier, Offset: offset}
 	}
 
 	if tail.Config.RateLimiter != nil {

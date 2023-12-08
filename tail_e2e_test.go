@@ -25,7 +25,42 @@ const MaxSleepNs = 500000 // 0.5 ms
 const MinSleepNS = 1000   // 0.001 ms
 
 // Disable Library e2e tests unless we're digging into things.
-const EnableLibraryTests = true
+const EnableLibraryTests = false
+
+func TestTail_Offsets(t *testing.T) {
+	testDir := t.TempDir()
+	testFile := filepath.Join(testDir, "test.log")
+	f, err := os.Create(testFile)
+	noError(t, err)
+	f.WriteString("hello\n") //6
+
+	tailer, err := TailFile(testFile, Config{Follow: true, ReOpen: true})
+	noError(t, err)
+	line := <-tailer.Lines
+	tailer.Cleanup()
+	tailer.Stop()
+
+	if line.Text != "hello" {
+		t.Errorf(`expect "hello" got %q`, line.Text)
+	}
+	if line.Offset != 6 {
+		t.Errorf(`expected offset of 6, got %d`, line.Offset)
+	}
+
+	f.WriteString("world\n") //6 + 6 = 12
+	tailer, err = TailFile(testFile, Config{Follow: true, ReOpen: true, Location: &SeekInfo{Offset: line.Offset, Whence: 0}})
+	noError(t, err)
+	line = <-tailer.Lines
+	tailer.Cleanup()
+	tailer.Stop()
+
+	if line.Text != "world" {
+		t.Errorf(`expect "world" got %q`, line.Text)
+	}
+	if line.Offset != 12 {
+		t.Errorf(`expected offset of 12, got %d`, line.Offset)
+	}
+}
 
 // Exercise the library against how files are rotated with kubernetes log drivers.
 func TestTail_KubernetesLogDriver(t *testing.T) {
