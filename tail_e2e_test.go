@@ -26,7 +26,7 @@ const MaxSleepNs = 500000 // 0.5 ms
 const MinSleepNS = 1000   // 0.001 ms
 
 // Disable Library e2e tests unless we're digging into things.
-const EnableE2ETests = false
+const EnableE2ETests = true
 
 func TestTail_Offsets(t *testing.T) {
 	t.Run("Offsets without FileIdentifier", func(t *testing.T) {
@@ -169,16 +169,23 @@ func pause(t *testing.T) {
 func writeLogsToFiles(t *testing.T, filename string) {
 	t.Helper()
 
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	writeDir := filepath.Join(filepath.Dir(filename), "write")
+	err := os.MkdirAll(writeDir, 0755)
 	noError(t, err)
+
+	writeFilename := filepath.Join(writeDir, filepath.Base(filename))
+
+	f, err := os.OpenFile(writeFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	noError(t, err)
+	noError(t, os.Symlink(writeFilename, filename))
 	for i := 1; i <= NumLines; i++ {
 		if i%1000 == 0 {
 			f.Sync()
 			f.Close()
-			rotate(filename, MaxFiles, true)
+			rotate(writeFilename, MaxFiles, true)
 
-			compressFile(t, fmt.Sprintf("%s.1", filename), time.Now())
-			f, err = os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			compressFile(t, fmt.Sprintf("%s.1", writeFilename), time.Now())
+			f, err = os.OpenFile(writeFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 			noError(t, err)
 		}
 		_, err := f.WriteString(fmt.Sprintf("%d\n", i))
