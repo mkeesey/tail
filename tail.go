@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tenebris-tech/tail/ratelimiter"
@@ -84,6 +85,9 @@ type Tail struct {
 	file           *os.File
 	reader         *bufio.Reader
 	fileIdentifier string // unique identifier for the current file - OS specific
+	count          atomic.Int32
+	lastDeleted    bool
+	lastTruncated  bool
 
 	watcher watch.FileWatcher
 	changes *watch.FileChanges
@@ -132,6 +136,7 @@ func TailFile(filename string, config Config) (*Tail, error) {
 		if err != nil {
 			return nil, err
 		}
+		t.Logger.Printf("Opened %s", t.Filename)
 	}
 
 	go t.tailFileSync()
@@ -206,6 +211,7 @@ func (tail *Tail) reopen() error {
 			}
 			return fmt.Errorf("unable to open file %s: %s", tail.Filename, err)
 		}
+		tail.Logger.Printf("Opened %s. Previous line count %d", tail.Filename, tail.count.Swap(0))
 		break
 	}
 	return nil
@@ -226,6 +232,7 @@ func (tail *Tail) readLine() (string, int64, error) {
 
 	line = strings.TrimRight(line, "\n")
 
+	tail.count.Add(1)
 	return line, read, err
 }
 
@@ -298,6 +305,7 @@ func (tail *Tail) tailFileSync() {
 
 			// Try to rewind back to the end of the last full line if we read a partial line
 			if tail.Follow && line != "" && !tail.Pipe {
+				tail.Logger.Print("Trying to rewind")
 				// this has the potential to never return the last line if
 				// it's not followed by a newline; seems a fair trade here
 				err := tail.seekTo(SeekInfo{Offset: offset, Whence: 0})
@@ -349,10 +357,8 @@ func (tail *Tail) waitForChanges() error {
 		}
 	}
 
-	select {
-	case <-tail.changes.Modified:
-		return nil
-	case <-tail.changes.Deleted:
+	if tail.lastDeleted {
+		tail.lastDeleted = false
 		tail.changes = nil
 		if tail.ReOpen {
 			// XXX: we must not log from a library.
@@ -367,7 +373,8 @@ func (tail *Tail) waitForChanges() error {
 			tail.Logger.Printf("Stopping tail as file no longer exists: %s", tail.Filename)
 			return ErrStop
 		}
-	case <-tail.changes.Truncated:
+	} else if tail.lastTruncated {
+		tail.lastTruncated = false
 		// Always reopen truncated files (Follow is true)
 		tail.Logger.Printf("Re-opening truncated file %s ...", tail.Filename)
 		if err := tail.reopen(); err != nil {
@@ -376,6 +383,17 @@ func (tail *Tail) waitForChanges() error {
 		tail.Logger.Printf("Successfully reopened truncated %s", tail.Filename)
 		tail.openReader()
 		return nil
+	}
+
+	select {
+	case <-tail.changes.Modified:
+		return nil
+	case <-tail.changes.Deleted:
+		tail.lastDeleted = true
+		return nil // Will be handled in next iteration. Give a chance to read the final lines.
+	case <-tail.changes.Truncated:
+		tail.lastTruncated = true
+		return nil // Will be handled in next iteration. Give a chance to read the final lines.
 	case <-tail.Dying():
 		return ErrStop
 	}

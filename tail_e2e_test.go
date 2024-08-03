@@ -128,10 +128,8 @@ func TestTail_KubernetesLogDriver(t *testing.T) {
 				}
 				number, err := strconv.Atoi(line.Text)
 				noError(t, err)
-				// Ensure lines are in order.
-				// Text starts from 1, but count starts from 0
-				if number != count+1 {
-					t.Fatalf("expected %d, got %d", count+1, number)
+				if number != count {
+					t.Fatalf("expected %d, got %d", count, number)
 				}
 				count++
 				if count == NumLines {
@@ -156,6 +154,7 @@ func TestTail_KubernetesLogDriver(t *testing.T) {
 func pause(t *testing.T) {
 	t.Helper()
 	sleepTime, err := rand.Int(rand.Reader, big.NewInt(MaxSleepNs-MinSleepNS))
+	//t.Logf("Sleeping for %d", sleepTime.Int64()+MinSleepNS)
 	noError(t, err)
 	time.Sleep(time.Duration(sleepTime.Int64()+MinSleepNS) * time.Nanosecond)
 }
@@ -178,8 +177,9 @@ func writeLogsToFiles(t *testing.T, filename string) {
 	f, err := os.OpenFile(writeFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	noError(t, err)
 	noError(t, os.Symlink(writeFilename, filename))
-	for i := 1; i <= NumLines; i++ {
-		if i%1000 == 0 {
+	for i := 0; i < NumLines; i++ {
+		if i%1000 == 0 && i != 0 {
+			fmt.Printf("Rotating file with log line num %d\n", i)
 			f.Sync()
 			f.Close()
 			rotate(writeFilename, MaxFiles, true)
@@ -217,11 +217,13 @@ func rotate(name string, maxFiles int, compress bool) error {
 	for i := maxFiles - 1; i > 1; i-- {
 		toPath := name + "." + strconv.Itoa(i) + extension
 		fromPath := name + "." + strconv.Itoa(i-1) + extension
+		fmt.Printf("rename %s -> %s\n", fromPath, toPath)
 		if err := os.Rename(fromPath, toPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
 
+	fmt.Printf("rename %s -> %s\n", name, name+".1")
 	if err := os.Rename(name, name+".1"); err != nil && !os.IsNotExist(err) {
 		return err
 	}

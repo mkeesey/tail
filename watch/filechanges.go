@@ -1,5 +1,7 @@
 package watch
 
+import "fmt"
+
 type FileChanges struct {
 	Modified  chan bool // Channel to get notified of modifications
 	Truncated chan bool // Channel to get notified of truncations
@@ -12,14 +14,17 @@ func NewFileChanges() *FileChanges {
 }
 
 func (fc *FileChanges) NotifyModified() {
+	//fmt.Println("Notify Modified")
 	sendOnlyIfEmpty(fc.Modified)
 }
 
 func (fc *FileChanges) NotifyTruncated() {
+	fmt.Println("Notify Truncated")
 	sendOnlyIfEmpty(fc.Truncated)
 }
 
 func (fc *FileChanges) NotifyDeleted() {
+	fmt.Println("Notify Deleted")
 	sendOnlyIfEmpty(fc.Deleted)
 }
 
