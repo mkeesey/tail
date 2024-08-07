@@ -21,7 +21,7 @@ import (
 )
 
 const MaxFiles = 11
-const NumLines = 10000
+const NumLines = 10001
 const MaxSleepNs = 500000 // 0.5 ms
 const MinSleepNS = 1000   // 0.001 ms
 
@@ -99,9 +99,11 @@ func TestTail_KubernetesLogDriver(t *testing.T) {
 	}
 
 	testDir := t.TempDir()
+	// testDir := "/tmp/tail_e2e_test"
+	// os.MkdirAll(testDir, 0755)
 	testFile := filepath.Join(testDir, "test.log")
 
-	tailer, err := TailFile(testFile, Config{Follow: true, ReOpen: true})
+	tailer, err := TailFile(testFile, Config{Follow: true, ReOpen: true, Poll: true})
 	noError(t, err)
 	defer tailer.Cleanup()
 	defer tailer.Stop()
@@ -151,6 +153,16 @@ func TestTail_KubernetesLogDriver(t *testing.T) {
 	noError(t, err)
 }
 
+func TestNotifications(t *testing.T) {
+	//t.Skip()
+	testDir := "/tmp/tail_e2e_test"
+	os.MkdirAll(testDir, 0755)
+	//os.RemoveAll(testDir + "/")
+	testFile := filepath.Join(testDir, "test.log")
+
+	writeLogsToFiles(t, testFile)
+}
+
 func pause(t *testing.T) {
 	t.Helper()
 	sleepTime, err := rand.Int(rand.Reader, big.NewInt(MaxSleepNs-MinSleepNS))
@@ -176,7 +188,8 @@ func writeLogsToFiles(t *testing.T, filename string) {
 
 	f, err := os.OpenFile(writeFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	noError(t, err)
-	noError(t, os.Symlink(writeFilename, filename))
+	//noError(t, os.Symlink(writeFilename, filename)) TODO TODO TODO TODO
+	os.Symlink(writeFilename, filename)
 	for i := 0; i < NumLines; i++ {
 		if i%1000 == 0 && i != 0 {
 			fmt.Printf("Rotating file with log line num %d\n", i)

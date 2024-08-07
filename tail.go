@@ -346,40 +346,47 @@ func (tail *Tail) tailFileSync() {
 // moved or truncated. When moved or deleted - the file will be
 // reopened if ReOpen is true. Truncated files are always reopened.
 func (tail *Tail) waitForChanges() error {
+	fmt.Println("wait for changes")
 	if tail.changes == nil {
 		pos, err := tail.file.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
 		}
+		fmt.Println("creating changes watcher")
 		tail.changes, err = tail.watcher.ChangeEvents(&tail.Tomb, pos)
 		if err != nil {
 			return err
 		}
+
+		return nil // Just added a watcher. Try again in case all the writes happened before we added the watcher.
 	}
 
 	if tail.lastDeleted {
-		tail.lastDeleted = false
-		tail.changes = nil
 		if tail.ReOpen {
 			// XXX: we must not log from a library.
 			tail.Logger.Printf("Re-opening moved/deleted file %s ...", tail.Filename)
 			if err := tail.reopen(); err != nil {
 				return err
 			}
+			tail.lastDeleted = false
+			tail.changes = nil
 			tail.Logger.Printf("Successfully reopened %s", tail.Filename)
 			tail.openReader()
 			return nil
 		} else {
 			tail.Logger.Printf("Stopping tail as file no longer exists: %s", tail.Filename)
+			tail.lastDeleted = false
+			tail.changes = nil
 			return ErrStop
 		}
 	} else if tail.lastTruncated {
-		tail.lastTruncated = false
 		// Always reopen truncated files (Follow is true)
 		tail.Logger.Printf("Re-opening truncated file %s ...", tail.Filename)
 		if err := tail.reopen(); err != nil {
 			return err
 		}
+		tail.lastTruncated = false
+		tail.changes = nil
 		tail.Logger.Printf("Successfully reopened truncated %s", tail.Filename)
 		tail.openReader()
 		return nil
