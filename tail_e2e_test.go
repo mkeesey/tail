@@ -98,59 +98,90 @@ func TestTail_KubernetesLogDriver(t *testing.T) {
 		t.Skip("skipping test in short mode.")
 	}
 
-	testDir := t.TempDir()
-	testFile := filepath.Join(testDir, "test.log")
+	type testcase struct {
+		name   string
+		config Config
+	}
 
-	tailer, err := TailFile(testFile, Config{Follow: true, ReOpen: true})
-	noError(t, err)
-	defer tailer.Cleanup()
-	defer tailer.Stop()
+	testcases := []testcase{
+		{
+			name: "Polling",
+			config: Config{
+				Follow: true,
+				ReOpen: true,
+				Poll:   true,
+			},
+		},
+		{
+			name: "Inotify",
+			config: Config{
+				Follow: true,
+				ReOpen: true,
+				Poll:   false,
+			},
+		},
+	}
 
-	group, ctx := errgroup.WithContext(context.Background())
-	counterCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
+	for _, tc := range testcases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	// Read lines from the tailer
-	group.Go(func() error {
-		count := 0
-		for {
-			select {
-			case <-counterCtx.Done():
-				return fmt.Errorf("tailer exited with count %d: %w", count, counterCtx.Err())
-			case line, ok := <-tailer.Lines:
-				if !ok {
-					return fmt.Errorf("tailer closed the channel: exited with count %d", count)
+			testDir := t.TempDir()
+			testFile := filepath.Join(testDir, "test.log")
+
+			tailer, err := TailFile(testFile, tc.config)
+			noError(t, err)
+			defer tailer.Cleanup()
+			defer tailer.Stop()
+
+			group, ctx := errgroup.WithContext(context.Background())
+			counterCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+
+			// Read lines from the tailer
+			group.Go(func() error {
+				count := 0
+				for {
+					select {
+					case <-counterCtx.Done():
+						return fmt.Errorf("tailer exited with count %d: %w", count, counterCtx.Err())
+					case line, ok := <-tailer.Lines:
+						if !ok {
+							return fmt.Errorf("tailer closed the channel: exited with count %d", count)
+						}
+						if line.Err != nil {
+							t.Logf("tailer error: %v", line.Err)
+							//skip
+							continue
+						}
+						number, err := strconv.Atoi(line.Text)
+						noError(t, err)
+						// Ensure lines are in order.
+						// Text starts from 1, but count starts from 0
+						if number != count+1 {
+							t.Fatalf("expected %d, got %d", count+1, number)
+						}
+						count++
+						if count == NumLines {
+							return nil
+						}
+						// Add a bit of jitter to log reads
+						pause(t)
+					}
 				}
-				if line.Err != nil {
-					t.Logf("tailer error: %v", line.Err)
-					//skip
-					continue
-				}
-				number, err := strconv.Atoi(line.Text)
-				noError(t, err)
-				// Ensure lines are in order.
-				// Text starts from 1, but count starts from 0
-				if number != count+1 {
-					t.Fatalf("expected %d, got %d", count+1, number)
-				}
-				count++
-				if count == NumLines {
-					return nil
-				}
-				// Add a bit of jitter to log reads
-				pause(t)
-			}
-		}
-	})
+			})
 
-	// Write the log files
-	group.Go(func() error {
-		writeLogsToFiles(t, testFile)
-		return nil
-	})
+			// Write the log files
+			group.Go(func() error {
+				writeLogsToFiles(t, testFile)
+				return nil
+			})
 
-	err = group.Wait()
-	noError(t, err)
+			err = group.Wait()
+			noError(t, err)
+		})
+	}
 }
 
 func pause(t *testing.T) {
@@ -182,6 +213,7 @@ func writeLogsToFiles(t *testing.T, filename string) {
 		if i%1000 == 0 {
 			f.Sync()
 			f.Close()
+			DefaultLogger.Printf("rotated")
 			rotate(writeFilename, MaxFiles, true)
 
 			compressFile(t, fmt.Sprintf("%s.1", writeFilename), time.Now())

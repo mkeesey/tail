@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"strings"
@@ -83,10 +84,12 @@ type Tail struct {
 
 	file           *os.File
 	reader         *bufio.Reader
+	fileInfo       fs.FileInfo
 	fileIdentifier string // unique identifier for the current file - OS specific
 
-	watcher watch.FileWatcher
-	changes *watch.FileChanges
+	watcher     watch.FileWatcher
+	changes     *watch.FileChanges
+	needsReopen bool
 
 	tomb.Tomb // provides: Done, Kill, Dying
 
@@ -128,7 +131,11 @@ func TailFile(filename string, config Config) (*Tail, error) {
 
 	if t.MustExist {
 		var err error
-		t.file, t.fileIdentifier, err = OpenFile(t.Filename)
+		t.file, t.fileInfo, err = OpenFile(t.Filename)
+		if err != nil {
+			return nil, err
+		}
+		t.fileIdentifier, err = FileIdentifier(t.fileInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -189,10 +196,11 @@ func (tail *Tail) closeFile() {
 }
 
 func (tail *Tail) reopen() error {
+	tail.Logger.Printf("Attempting to reopen %s ...", tail.Filename)
 	tail.closeFile()
 	for {
 		var err error
-		tail.file, tail.fileIdentifier, err = OpenFile(tail.Filename)
+		tail.file, tail.fileInfo, err = OpenFile(tail.Filename)
 		if err != nil {
 			if os.IsNotExist(err) {
 				tail.Logger.Printf("Waiting for %s to appear...", tail.Filename)
@@ -205,6 +213,11 @@ func (tail *Tail) reopen() error {
 				continue
 			}
 			return fmt.Errorf("unable to open file %s: %s", tail.Filename, err)
+		}
+
+		tail.fileIdentifier, err = FileIdentifier(tail.fileInfo)
+		if err != nil {
+			return fmt.Errorf("get FileIdentifier: %w", err)
 		}
 		break
 	}
@@ -310,7 +323,7 @@ func (tail *Tail) tailFileSync() {
 			// When EOF is reached, wait for more data to become
 			// available. Wait strategy is based on the `tail.watcher`
 			// implementation (inotify or polling).
-			err := tail.waitForChanges()
+			err := tail.waitForChanges(offset)
 			if err != nil {
 				if err != ErrStop {
 					tail.Kill(err)
@@ -337,48 +350,47 @@ func (tail *Tail) tailFileSync() {
 // waitForChanges waits until the file has been appended, deleted,
 // moved or truncated. When moved or deleted - the file will be
 // reopened if ReOpen is true. Truncated files are always reopened.
-func (tail *Tail) waitForChanges() error {
-	if tail.changes == nil {
-		pos, err := tail.file.Seek(0, io.SeekCurrent)
-		if err != nil {
+func (tail *Tail) waitForChanges(offset int64) error {
+	if tail.needsReopen {
+		tail.needsReopen = false
+		tail.Logger.Printf("Re-opening file %s ...", tail.Filename)
+		if err := tail.reopen(); err != nil {
 			return err
 		}
-		tail.changes, err = tail.watcher.ChangeEvents(&tail.Tomb, pos)
-		if err != nil {
-			return err
-		}
+		tail.Logger.Printf("Successfully reopened %s", tail.Filename)
+		tail.openReader()
+		return nil
 	}
 
-	select {
-	case <-tail.changes.Modified:
+	change, err := tail.watcher.BlockUntilEvent(&tail.Tomb, tail.fileInfo, offset)
+	if err != nil {
+		return err
+	}
+	if change == watch.Modified {
 		return nil
-	case <-tail.changes.Deleted:
+	} else if change == watch.Deleted {
 		tail.changes = nil
 		if tail.ReOpen {
-			// XXX: we must not log from a library.
-			tail.Logger.Printf("Re-opening moved/deleted file %s ...", tail.Filename)
-			if err := tail.reopen(); err != nil {
-				return err
-			}
-			tail.Logger.Printf("Successfully reopened %s", tail.Filename)
-			tail.openReader()
+			// Return now to consume any lines that were written before the file was moved or deleted, but after our last reads.
+			// After we reach EOF again from our existing open file, we'll reopen the file and continue tailing.
+			tail.needsReopen = true
+			tail.Logger.Printf("Deferring reopen for deleted/moved file: %s", tail.Filename)
 			return nil
 		} else {
 			tail.Logger.Printf("Stopping tail as file no longer exists: %s", tail.Filename)
 			return ErrStop
 		}
-	case <-tail.changes.Truncated:
+	} else if change == watch.Truncated {
 		// Always reopen truncated files (Follow is true)
-		tail.Logger.Printf("Re-opening truncated file %s ...", tail.Filename)
-		if err := tail.reopen(); err != nil {
-			return err
-		}
-		tail.Logger.Printf("Successfully reopened truncated %s", tail.Filename)
-		tail.openReader()
+		// Return now to consume any lines that were written before the file was considered truncated, but after our last reads.
+		// fsnotify will sometimes report a file as truncated even though it was actually moved and replaced with a new file.
+		// After we reach EOF again from our existing open file, we'll reopen the file and continue tailing.
+		tail.needsReopen = true
+		tail.Logger.Printf("Deferring reopen for truncated file: %s", tail.Filename)
 		return nil
-	case <-tail.Dying():
-		return ErrStop
 	}
+
+	return nil // default case
 }
 
 func (tail *Tail) openReader() {
