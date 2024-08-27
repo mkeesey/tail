@@ -430,8 +430,11 @@ func (tail *Tail) sendLine(line string, offset int64) bool {
 	}
 
 	for _, line := range lines {
-		// TODO offset
-		tail.Lines <- &Line{Text: line, Time: now, Err: nil, FileIdentifier: tail.fileIdentifier, Offset: offset}
+		select {
+		case <-tail.Dying():
+			return true // dying
+		case tail.Lines <- &Line{Text: line, Time: now, Err: nil, FileIdentifier: tail.fileIdentifier, Offset: offset}:
+		}
 	}
 
 	if tail.Config.RateLimiter != nil {
