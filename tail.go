@@ -276,13 +276,19 @@ func (tail *Tail) tailFileSync() {
 
 	tail.openReader()
 
+	partialLine := ""
 	// Read line by line.
 	for {
 		line, numRead, err := tail.readLine()
+		offset += numRead
+
+		if partialLine != "" {
+			line = partialLine + line
+			partialLine = ""
+		}
 
 		// Process `line` even if err is EOF.
 		if err == nil {
-			offset += numRead
 			cooloff := !tail.sendLine(line, offset)
 			if cooloff {
 				// Wait a second before seeking till the end of
@@ -301,23 +307,24 @@ func (tail *Tail) tailFileSync() {
 				}
 			}
 		} else if err == io.EOF {
+			// We have consumed to the end and are not following. Flush this last data and exit.
 			if !tail.Follow {
-				offset += numRead
 				if line != "" {
 					tail.sendLine(line, offset)
 				}
 				return
 			}
 
-			// Try to rewind back to the end of the last full line if we read a partial line
-			if tail.Follow && line != "" && !tail.Pipe {
-				// this has the potential to never return the last line if
-				// it's not followed by a newline; seems a fair trade here
-				err := tail.seekTo(SeekInfo{Offset: offset, Whence: 0})
-				if err != nil {
-					tail.Kill(err)
-					return
+			if tail.needsReopen {
+				// We have consumed to EOF and no more data is coming. Flush this data.
+				// waitForChanges will then open the new file, if appropriate.
+				if line != "" {
+					tail.sendLine(line, offset)
 				}
+			} else {
+				// We have consumed to EOF and are following. Save this line for the next
+				// iteration, and wait for more data to become available.
+				partialLine = line
 			}
 
 			// When EOF is reached, wait for more data to become

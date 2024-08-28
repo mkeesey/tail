@@ -130,6 +130,9 @@ func TestTail_KubernetesLogDriver(t *testing.T) {
 			testDir := t.TempDir()
 			testFile := filepath.Join(testDir, "test.log")
 
+			logger := &TestLogger{t}
+			tc.config.Logger = logger
+
 			tailer, err := TailFile(testFile, tc.config)
 			noError(t, err)
 			defer tailer.Cleanup()
@@ -213,7 +216,7 @@ func writeLogsToFiles(t *testing.T, filename string) {
 		if i%1000 == 0 {
 			f.Sync()
 			f.Close()
-			DefaultLogger.Printf("rotated")
+			t.Log("rotated")
 			rotate(writeFilename, MaxFiles, true)
 
 			compressFile(t, fmt.Sprintf("%s.1", writeFilename), time.Now())
@@ -336,4 +339,43 @@ func eq(t *testing.T, actual, expected any) {
 	if !reflect.DeepEqual(expected, actual) {
 		t.Fatalf("Expected %v, got %v", expected, actual)
 	}
+}
+
+type TestLogger struct {
+	t *testing.T
+}
+
+func (l *TestLogger) Fatal(v ...interface{}) {
+	l.t.Fatal(v...)
+}
+
+func (l *TestLogger) Fatalf(format string, v ...interface{}) {
+	l.t.Fatalf(format, v...)
+}
+
+func (l *TestLogger) Fatalln(v ...interface{}) {
+	l.t.Fatalf("%s\n", v...)
+}
+func (l *TestLogger) Panic(v ...interface{}) {
+	panic(v)
+}
+
+func (l *TestLogger) Panicf(format string, v ...interface{}) {
+	panic(fmt.Sprintf(format, v...))
+}
+
+func (l *TestLogger) Panicln(v ...interface{}) {
+	panic(fmt.Sprintf("%s\n", v...))
+}
+
+func (l *TestLogger) Print(v ...interface{}) {
+	l.t.Log(v...)
+}
+
+func (l *TestLogger) Printf(format string, v ...interface{}) {
+	l.t.Logf(format, v...)
+}
+
+func (l *TestLogger) Println(v ...interface{}) {
+	l.t.Log(v...)
 }
