@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tenebris-tech/tail/logging"
 	"github.com/tenebris-tech/tail/ratelimiter"
 	"github.com/tenebris-tech/tail/util"
 	"github.com/tenebris-tech/tail/watch"
@@ -46,18 +47,6 @@ type SeekInfo struct {
 	FileIdentifier string
 }
 
-type logger interface {
-	Fatal(v ...interface{})
-	Fatalf(format string, v ...interface{})
-	Fatalln(v ...interface{})
-	Panic(v ...interface{})
-	Panicf(format string, v ...interface{})
-	Panicln(v ...interface{})
-	Print(v ...interface{})
-	Printf(format string, v ...interface{})
-	Println(v ...interface{})
-}
-
 // Config is used to specify how a file must be tailed.
 type Config struct {
 	// File-specifc
@@ -74,7 +63,7 @@ type Config struct {
 
 	// Logger, when nil, is set to tail.DefaultLogger
 	// To disable logging: set field to tail.DiscardingLogger
-	Logger logger
+	Logger logging.Logger
 }
 
 type Tail struct {
@@ -139,6 +128,7 @@ func TailFile(filename string, config Config) (*Tail, error) {
 		if err != nil {
 			return nil, err
 		}
+		t.openReader()
 	}
 
 	go t.tailFileSync()
@@ -219,6 +209,7 @@ func (tail *Tail) reopen() error {
 		if err != nil {
 			return fmt.Errorf("get FileIdentifier: %w", err)
 		}
+		tail.openReader()
 		break
 	}
 	return nil
@@ -262,7 +253,7 @@ func (tail *Tail) tailFileSync() {
 	// Seek to requested location on first open of the file.
 	if tail.Location != nil {
 		if tail.Location.FileIdentifier == "" || tail.Location.FileIdentifier == tail.fileIdentifier {
-			_, err := tail.file.Seek(tail.Location.Offset, tail.Location.Whence)
+			err := tail.seekTo(*tail.Location)
 			tail.Logger.Printf("Seeked %s - %+v\n", tail.Filename, tail.Location)
 			if err != nil {
 				_ = tail.Killf("Seek error on %s: %s", tail.Filename, err)
@@ -273,8 +264,6 @@ func (tail *Tail) tailFileSync() {
 			tail.Logger.Printf("Skipping seek because fileIdentifier %q does not match requested FileIdentifier %q", tail.fileIdentifier, tail.Location.FileIdentifier)
 		}
 	}
-
-	tail.openReader()
 
 	partialLine := ""
 	// Read line by line.
@@ -365,7 +354,6 @@ func (tail *Tail) waitForChanges(offset int64) error {
 			return err
 		}
 		tail.Logger.Printf("Successfully reopened %s", tail.Filename)
-		tail.openReader()
 		return nil
 	}
 
