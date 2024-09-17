@@ -11,16 +11,18 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/tenebris-tech/tail/logging"
 	"gopkg.in/tomb.v1"
 )
 
 // InotifyFileWatcher uses inotify to monitor file changes.
 type InotifyFileWatcher struct {
 	Filename string
+	logger   logging.Logger
 }
 
-func NewInotifyFileWatcher(filename string) *InotifyFileWatcher {
-	fw := &InotifyFileWatcher{filepath.Clean(filename)}
+func NewInotifyFileWatcher(filename string, logger logging.Logger) *InotifyFileWatcher {
+	fw := &InotifyFileWatcher{filepath.Clean(filename), logger}
 	return fw
 }
 
@@ -84,7 +86,7 @@ func (fw *InotifyFileWatcher) watchForEvents(t *tomb.Tomb, openedFileInfo fs.Fil
 
 	// Use stat to check for changes between when we start setting up the watches and when the watch is active.
 	// If there are changes, we can return immediately.
-	changeType, err := StatChanges(openedFileInfo, pos)
+	changeType, err := StatChanges(fw.Filename, openedFileInfo, pos, fw.logger)
 	if err != nil {
 		return None, err
 	}
@@ -127,7 +129,7 @@ func (fw *InotifyFileWatcher) handleEvent(evt fsnotify.Event, openedFileInfo fs.
 
 	// With an open FD, unlink(fd) - inotify returns IN_ATTRIB (==fsnotify.Chmod) on linux
 	if evt.Has(fsnotify.Chmod) {
-		changeType, err := StatChanges(openedFileInfo, prevSize)
+		changeType, err := StatChanges(fw.Filename, openedFileInfo, prevSize, fw.logger)
 		if err != nil {
 			return None, err
 		}

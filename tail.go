@@ -113,9 +113,9 @@ func TailFile(filename string, config Config) (*Tail, error) {
 	}
 
 	if t.Poll {
-		t.watcher = watch.NewPollingFileWatcher(filename)
+		t.watcher = watch.NewPollingFileWatcher(filename, t.Logger)
 	} else {
-		t.watcher = watch.NewInotifyFileWatcher(filename)
+		t.watcher = watch.NewInotifyFileWatcher(filename, t.Logger)
 	}
 
 	if t.MustExist {
@@ -205,6 +205,7 @@ func (tail *Tail) reopen() error {
 			return fmt.Errorf("unable to open file %s: %s", tail.Filename, err)
 		}
 
+		tail.Logger.Printf("Successfully reopened %s", tail.Filename)
 		tail.fileIdentifier, err = FileIdentifier(tail.fileInfo)
 		if err != nil {
 			return fmt.Errorf("get FileIdentifier: %w", err)
@@ -349,11 +350,9 @@ func (tail *Tail) tailFileSync() {
 func (tail *Tail) waitForChanges(offset int64) error {
 	if tail.needsReopen {
 		tail.needsReopen = false
-		tail.Logger.Printf("Re-opening file %s ...", tail.Filename)
 		if err := tail.reopen(); err != nil {
 			return err
 		}
-		tail.Logger.Printf("Successfully reopened %s", tail.Filename)
 		return nil
 	}
 
