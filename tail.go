@@ -75,6 +75,7 @@ type Tail struct {
 	reader         *bufio.Reader
 	fileInfo       fs.FileInfo
 	fileIdentifier string // unique identifier for the current file - OS specific
+	offset         int64
 
 	watcher     watch.FileWatcher
 	changes     *watch.FileChanges
@@ -249,8 +250,6 @@ func (tail *Tail) tailFileSync() {
 		}
 	}
 
-	var offset int64 = 0
-
 	// Seek to requested location on first open of the file.
 	if tail.Location != nil {
 		if tail.Location.FileIdentifier == "" || tail.Location.FileIdentifier == tail.fileIdentifier {
@@ -260,7 +259,6 @@ func (tail *Tail) tailFileSync() {
 				_ = tail.Killf("Seek error on %s: %s", tail.Filename, err)
 				return
 			}
-			offset = tail.Location.Offset
 		} else {
 			tail.Logger.Printf("Skipping seek because fileIdentifier %q does not match requested FileIdentifier %q", tail.fileIdentifier, tail.Location.FileIdentifier)
 		}
@@ -270,7 +268,7 @@ func (tail *Tail) tailFileSync() {
 	// Read line by line.
 	for {
 		line, numRead, err := tail.readLine()
-		offset += numRead
+		tail.offset += numRead
 
 		if partialLine != "" {
 			line = partialLine + line
@@ -279,7 +277,7 @@ func (tail *Tail) tailFileSync() {
 
 		// Process `line` even if err is EOF.
 		if err == nil {
-			cooloff := !tail.sendLine(line, offset)
+			cooloff := !tail.sendLine(line, tail.offset)
 			if cooloff {
 				// Wait a second before seeking till the end of
 				// file when rate limit is reached.
@@ -300,7 +298,7 @@ func (tail *Tail) tailFileSync() {
 			// We have consumed to the end and are not following. Flush this last data and exit.
 			if !tail.Follow {
 				if line != "" {
-					tail.sendLine(line, offset)
+					tail.sendLine(line, tail.offset)
 				}
 				return
 			}
@@ -309,7 +307,7 @@ func (tail *Tail) tailFileSync() {
 				// We have consumed to EOF and no more data is coming. Flush this data.
 				// waitForChanges will then open the new file, if appropriate.
 				if line != "" {
-					tail.sendLine(line, offset)
+					tail.sendLine(line, tail.offset)
 				}
 			} else {
 				// We have consumed to EOF and are following. Save this line for the next
@@ -320,7 +318,7 @@ func (tail *Tail) tailFileSync() {
 			// When EOF is reached, wait for more data to become
 			// available. Wait strategy is based on the `tail.watcher`
 			// implementation (inotify or polling).
-			err := tail.waitForChanges(offset)
+			err := tail.waitForChanges(tail.offset)
 			if err != nil {
 				if err != ErrStop {
 					tail.Kill(err)
@@ -396,6 +394,7 @@ func (tail *Tail) openReader() {
 		tail.reader = bufio.NewReader(tail.file)
 	}
 	tail.lk.Unlock()
+	tail.offset = 0
 }
 
 func (tail *Tail) seekEnd() error {
@@ -409,6 +408,7 @@ func (tail *Tail) seekTo(pos SeekInfo) error {
 	}
 	// Reset the read buffer whenever the file is re-seek'ed
 	tail.reader.Reset(tail.file)
+	tail.offset = pos.Offset
 	return nil
 }
 
