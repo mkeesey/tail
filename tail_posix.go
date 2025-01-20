@@ -23,7 +23,11 @@ func OpenFile(name string) (file *os.File, fileInfo fs.FileInfo, err error) {
 	return file, fileInfo, nil
 }
 
-func FileIdentifier(fileInfo fs.FileInfo) (string, error) {
+func FileIdentifier(file *os.File) (string, error) {
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return "", err
+	}
 	sys, ok := fileInfo.Sys().(*syscall.Stat_t)
 	if !ok {
 		return "", fmt.Errorf("failed to get file identifier for %s", fileInfo.Name())

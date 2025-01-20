@@ -125,7 +125,7 @@ func TailFile(filename string, config Config) (*Tail, error) {
 		if err != nil {
 			return nil, err
 		}
-		t.fileIdentifier, err = FileIdentifier(t.fileInfo)
+		t.fileIdentifier, err = FileIdentifier(t.file)
 		if err != nil {
 			return nil, err
 		}
@@ -207,7 +207,7 @@ func (tail *Tail) reopen() error {
 		}
 
 		tail.Logger.Printf("Successfully reopened %s", tail.Filename)
-		tail.fileIdentifier, err = FileIdentifier(tail.fileInfo)
+		tail.fileIdentifier, err = FileIdentifier(tail.file)
 		if err != nil {
 			return fmt.Errorf("get FileIdentifier: %w", err)
 		}
